@@ -6,8 +6,7 @@
 它会自动安装 MSYS2、下载 Fishtest Worker 文件、管理 Worker 配置，并在界面中实时显示日志和任务进度。
 程序首次运行默认使用简体中文，也可以在“设置”窗口中切换为 English。
 
-<img width="1952" height="1022" alt="image" src="https://github.com/user-attachments/assets/d36b2b06-b3c4-4a6e-aeff-70056640996d" />
-
+![app](https://github.com/user-attachments/assets/d36b2b06-b3c4-4a6e-aeff-70056640996d)
 
 ## 系统要求
 
@@ -20,14 +19,14 @@
 ### 1. 下载
 
 从 [Releases 页面](https://github.com/GodGun968/fishtest-worker-gui-I18N/releases)下载
-`fishtest-worker-gui.exe`。
+`fishtest-worker-gui-i18n.exe`。
 
 请将程序放在一个新的空文件夹中，用于管理 Worker。例如：
 `C:\Users\%username%\Downloads\FishtestWorker`。
 
 ### 2. 安装 Worker
 
-1. 运行 `fishtest-worker-gui.exe`。
+1. 运行 `fishtest-worker-gui-i18n.exe`。
 2. 点击“安装/重新安装 Worker”。
 3. Windows 将显示用户账户控制（UAC）提示，请点击“是”。
 4. 程序会自动将 MSYS2 安装到 `C:\msys64`，并在程序目录下的 `worker` 子文件夹中设置 Fishtest Worker 文件。
@@ -73,15 +72,13 @@
    pip install -r requirements.txt
    ```
 
-4. 使用 PyInstaller 构建并压缩可执行文件：
+4. 使用 PyInstaller 构建可执行文件：
 
    ```sh
-   set PYTHONOPTIMIZE=2
-   pyinstaller --noconfirm --clean fishtest-worker-gui.spec
-   upx --best --lzma dist/fishtest-worker-gui.exe
+   pyinstaller --name "fishtest-worker-gui-i18n" --onefile --noconsole --add-data "assets;assets" main.py
    ```
 
-   GitHub Actions 会用同一份 spec：去掉重复的 CustomTkinter、排除无用模块，并用 UPX LZMA 压缩最终 exe。
+   PyInstaller 会通过 CustomTkinter 官方 hook 自动收集所需资源，并使用 `assets/icon.ico` 设置程序图标。
 
 5. 最终的 `.exe` 文件位于 `dist` 文件夹中。
 
@@ -89,7 +86,7 @@
 
 - 界面文本由根目录的 `i18n.py` 统一管理。
 - 默认语言为简体中文；用户选择的语言会写入 `worker/fishtest.cfg` 的 `[general] language`。
-- 命令参数、文件名、配置节名和配置键保持原样。Worker 原始英文输出仍用于进度解析；简体中文界面会在显示前翻译常见日志。
+- Windows 和 MSYS2 会保留并使用 UTF-8 Unicode 路径，因此目录包含中文时也可以运行 Worker；只有包含 CMD 控制字符且无法转换为兼容路径时才会阻止执行。命令参数、文件名、配置节名和配置键保持原样。Worker 原始英文输出仍用于进度解析；简体中文界面会在显示前翻译常见日志。
 - 如果要增加语言，只需在 `i18n.py` 的 `LANGUAGE_NAMES`、`LOG_LEVEL_NAMES` 和 `TRANSLATIONS` 中增加对应语言条目。
 
 ## 许可证
