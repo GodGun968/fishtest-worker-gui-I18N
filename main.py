@@ -34,7 +34,10 @@ APP_VERSION = "v0.0.1" # 会与 tag 自动同步
 REPO_OWNER = "GodGun968"
 REPO_NAME = "fishtest-worker-gui-I18N"
 
-WORKER_DIR = os.path.abspath("worker")
+APP_DIR = os.path.dirname(os.path.abspath(
+    sys.executable if getattr(sys, "frozen", False) else __file__
+))
+WORKER_DIR = os.path.join(APP_DIR, "worker")
 CONFIG_FILE_NAME = "fishtest.cfg"
 CONFIG_FILE = os.path.join(WORKER_DIR, CONFIG_FILE_NAME)
 EXIT_FILE_NAME = "fish.exit"
@@ -49,15 +52,11 @@ def get_asset_path(relative_path):
     try:
         base_path = sys._MEIPASS
     except AttributeError:
-        base_path = os.path.abspath(".")
+        base_path = APP_DIR
     return os.path.join(base_path, "assets", relative_path)
 
 def windows_to_msys2_path(path):
-    """将 Windows 路径转换为 MSYS2 路径格式。
-
-    注意：MSYS2 对非 ASCII 字符（如中文）的支持有限，
-    建议使用纯英文路径以避免潜在问题。
-    """
+    """将 Windows 路径转换为 MSYS2 的 /drive/path 格式，保留 Unicode。"""
     # 将 C:\Users\... 转换为 /c/Users/...
     drive, rest = os.path.splitdrive(os.path.abspath(path))
     drive_letter = drive.rstrip(":\\/").lower()
@@ -84,15 +83,14 @@ def cmd_script_command(path, args=()):
         return f'"{value}"' if not value or any(char.isspace() for char in value) else value
 
     # 传入完整命令行字符串，避免 subprocess 为 /c 参数再次转义内层引号。
-    command_line = "call " + " ".join(quote(value) for value in values)
+    command_line = "chcp 65001 >nul & call " + " ".join(quote(value) for value in values)
     return f'"{command_shell}" /d /s /c {command_line}'
 
 def get_windows_short_path(path):
-    """为 MSYS2 获取 ASCII 兼容的 Windows 短路径。"""
+    """返回可传给 MSYS2 的路径；Unicode 路径直接保留原样。"""
     path = os.path.abspath(path)
     needs_short_path = (
-        not check_path_ascii(path)
-        or any(char in path for char in "&()^!%'")
+        any(char in path for char in "&()^!%'")
     )
     if not needs_short_path or os.name != "nt":
         return path
@@ -100,13 +98,11 @@ def get_windows_short_path(path):
         buffer = ctypes.create_unicode_buffer(32768)
         length = ctypes.windll.kernel32.GetShortPathNameW(path, buffer, len(buffer))
         short_path = buffer.value if length else ""
-        if (
-            short_path
-            and check_path_ascii(short_path)
-            and not any(char in short_path for char in "&|<>^()%!'\"")
+        if short_path and check_path_ascii(short_path) and not any(
+            char in short_path for char in "&|<>^()%!'\""
         ):
             return short_path
-        return None
+        return path
     except (AttributeError, OSError):
         return None
 
@@ -339,9 +335,9 @@ class FishtestManagerApp(ctk.CTk):
             self.add_log(t("log.config_load_failed", error=self._config_load_error), level="WARNING")
 
         # 检查当前工作目录是否包含非 ASCII 字符
-        current_dir = os.path.abspath(".")
+        current_dir = APP_DIR
         if not get_windows_short_path(current_dir):
-            self.add_log(t("log.non_ascii_path_error"), level="ERROR")
+            self.add_log(t("log.path_unsupported"), level="ERROR")
 
         msys2_installed = os.path.exists(os.path.join(MSYS2_PATH, "msys2_shell.cmd"))
         worker_installed = os.path.exists(os.path.join(WORKER_DIR, "worker.py"))
@@ -509,7 +505,7 @@ class FishtestManagerApp(ctk.CTk):
 
         script_path = get_windows_short_path(get_asset_path("00_install_winget_msys2_admin.cmd"))
         if not script_path:
-            self.add_log(t("log.non_ascii_path_error"), level="ERROR")
+            self.add_log(t("log.path_unsupported"), level="ERROR")
             return
         try:
             command = cmd_script_command(script_path)
@@ -532,9 +528,9 @@ class FishtestManagerApp(ctk.CTk):
 
         # 将安装脚本路径转换为 MSYS2 兼容格式
         script_win_path = get_windows_short_path(get_asset_path('gui_install_worker.sh'))
-        app_run_dir = get_windows_short_path(os.path.abspath("."))
+        app_run_dir = get_windows_short_path(APP_DIR)
         if not script_win_path or not app_run_dir:
-            self.add_log(t("log.non_ascii_path_error"), level="ERROR")
+            self.add_log(t("log.path_unsupported"), level="ERROR")
             return
         msys2_script_path = windows_to_msys2_path(script_win_path)
         # 脚本应从应用根目录运行，以创建"worker"子文件夹。
@@ -571,7 +567,7 @@ class FishtestManagerApp(ctk.CTk):
     def _update_msys2(self):
         script_path = get_windows_short_path(get_asset_path("04_update_msys2.cmd"))
         if not script_path:
-            self.add_log(t("log.non_ascii_path_error"), level="ERROR")
+            self.add_log(t("log.path_unsupported"), level="ERROR")
             return
         try:
             command = cmd_script_command(script_path)
@@ -680,7 +676,7 @@ class FishtestManagerApp(ctk.CTk):
         # 加引号以处理路径中的空格。
         worker_dir_win_path = get_windows_short_path(WORKER_DIR)
         if not worker_dir_win_path:
-            self.add_log(t("log.non_ascii_path_error"), level="ERROR")
+            self.add_log(t("log.path_unsupported"), level="ERROR")
             self.worker_state = "idle"
             self.task_progress_label.grid_remove()
             self.task_progress_bar.grid_remove()
