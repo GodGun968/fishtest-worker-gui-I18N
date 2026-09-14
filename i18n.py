@@ -64,7 +64,7 @@ TRANSLATIONS = {
         "log.update_invalid_version": "GitHub Release 版本号无效：{version}。",
         "log.latest_version": "当前已是最新版本（{version}）。",
         "log.new_version": "管理器有新版本可用（{version}）。",
-        "log.path_unsupported": "路径包含无法安全传递给 Windows 命令行的特殊字符，且无法转换为兼容路径。请将程序移动到其他目录后重试。",
+        "log.path_unsupported": "用户未允许创建路径兼容映射。强烈建议将程序移动到纯英文路径后再使用 Worker。",
         "dialog.elevation_failed.title": "提权失败",
         "dialog.elevation_failed.message": "无法以管理员权限重新启动程序：{error}",
         "dialog.install.title": "确认安装",
@@ -120,6 +120,8 @@ TRANSLATIONS = {
         "settings.register": "还没有账号？点击此处注册！",
         "dialog.exit.title": "退出",
         "dialog.exit.message": "Worker 仍在运行。要强制停止并退出吗？",
+        "dialog.path_compatibility.title": "需要路径兼容处理",
+        "dialog.path_compatibility.message": "当前程序目录包含非 ASCII 字符或命令行特殊字符。\n\n程序可以临时创建一个 ASCII 盘符映射，让 MSYS2 和 Worker 通过兼容路径访问原目录；退出程序时会删除该映射。\n\n建议优先将程序移动到纯英文路径。是否允许创建临时映射？",
     },
     "en_US": {
         "app.window_title": "Fishtest Worker Manager I18N ({version})",
@@ -159,7 +161,7 @@ TRANSLATIONS = {
         "log.update_invalid_version": "Invalid GitHub release version: {version}.",
         "log.latest_version": "You are using the latest version of the app ({version}).",
         "log.new_version": "A new version of the Manager is available ({version}).",
-        "log.path_unsupported": "The path contains special characters that cannot be safely passed through the Windows command line, and no compatible path is available. Move the program to another directory and try again.",
+        "log.path_unsupported": "The user did not allow a path compatibility mapping. Moving the program to an ASCII-only path is strongly recommended before using the Worker.",
         "dialog.elevation_failed.title": "Elevation Failed",
         "dialog.elevation_failed.message": "Could not re-launch with admin rights: {error}",
         "dialog.install.title": "Confirm Installation",
@@ -215,6 +217,8 @@ TRANSLATIONS = {
         "settings.register": "Don't have an account? Register here!",
         "dialog.exit.title": "Exit",
         "dialog.exit.message": "The worker is still running. Do you want to force stop it and exit?",
+        "dialog.path_compatibility.title": "Path compatibility is required",
+        "dialog.path_compatibility.message": "The program directory contains non-ASCII characters or command-line special characters.\n\nThe program can temporarily create an ASCII drive mapping so MSYS2 and the Worker can access the original directory. The mapping will be removed when the program exits.\n\nMoving the program to an ASCII-only path is strongly recommended. Allow the temporary mapping?",
     },
 }
 
@@ -267,6 +271,39 @@ _STAT_LABELS = {
     "Max nps": "最高 NPS",
     "Stdev (%)": "标准差（%）",
 }
+
+_FASTCHESS_CONFIG_LABELS = {
+    "debug": "调试",
+    "sanitize": "安全检查",
+    "optimize": "优化",
+    "arch": "架构",
+    "bits": "位数",
+    "kernel": "内核",
+    "prefetch": "预取",
+    "popcnt": "popcnt",
+    "pext": "pext",
+    "sse": "SSE",
+    "mmx": "MMX",
+    "sse2": "SSE2",
+    "ssse3": "SSSE3",
+    "sse41": "SSE4.1",
+    "avx2": "AVX2",
+    "avxvnni": "AVX VNNI",
+    "avx512": "AVX-512",
+    "vnni512": "VNNI-512",
+    "avx512icl": "AVX-512 ICL",
+    "altivec": "AltiVec",
+    "vsx": "VSX",
+    "neon": "NEON",
+    "dotprod": "DotProd",
+    "arm_version": "ARM 版本",
+    "lsx": "LSX",
+    "lasx": "LASX",
+    "syzygy": "Syzygy",
+    "target_windows": "Windows 目标",
+}
+
+_FASTCHESS_CONFIG_PATTERN = r"^(debug|sanitize|optimize|arch|bits|kernel|prefetch|popcnt|pext|sse|mmx|sse2|ssse3|sse41|avx2|avxvnni|avx512|vnni512|avx512icl|altivec|vsx|neon|dotprod|arm_version|lsx|lasx|syzygy|target_windows): '([^']*)'$"
 
 _RESULT_REASONS = {
     "Draw by insufficient mating material": "因子力不足判和",
@@ -433,6 +470,33 @@ _WORKER_LINE_PATTERNS = (
     (r"^Removing fish\.exit file\.$", "正在删除 fish.exit 文件。"),
     (r"^Releasing the worker lock\.$", "正在释放 Worker 锁。"),
     (r"^Waiting for the heartbeat thread to finish\.\.\.$", "正在等待心跳线程结束……"),
+    (r"^PLEASE submit a bug report to (https://\S+) and include command line parameters and possibly the stdout/log of fastchess\.$",
+     "请将错误报告提交至 {0}，并附上命令行参数以及 fastchess 的标准输出/日志（如有）。"),
+    (r"^filesystem error: (.+)$", "文件系统错误：{0}"),
+    (r"^Waiting for fastchess to finish\.\.\.\s*done\.$", "正在等待 fastchess 结束……已完成。"),
+    (r"^Exception running games:$", "运行对局时出错："),
+    (r"^Fastchess failed with error code (.+)$", "Fastchess 失败，错误代码：{0}"),
+    (r"^Existing (.+) validated, skipping download$", "已有 {0} 已通过验证，跳过下载"),
+    (r"^Config:$", "配置："),
+    (_FASTCHESS_CONFIG_PATTERN, "{0}: '{1}'"),
+    (r"^Flags:$", "编译标志："),
+    (r"^CXX:\s*(.+)$", "CXX：{0}"),
+    (r"^CXXFLAGS:\s*(.+)$", "CXXFLAGS：{0}"),
+    (r"^LDFLAGS:\s*(.+)$", "LDFLAGS：{0}"),
+    (r"^Testing config sanity\. If this fails, try 'make help' \.\.\.$",
+     "正在检查配置是否合理。如果失败，请尝试运行“make help”……"),
+    (r"^Step (\d+)/(\d+)\. Building instrumented executable \.\.\.$",
+     "第 {0}/{1} 步：正在构建插桩可执行文件……"),
+    (r"^Step (\d+)/(\d+)\. Running benchmark for pgo-build \.\.\.$",
+     "第 {0}/{1} 步：正在运行 pgo-build 基准测试……"),
+    (r"^Step (\d+)/(\d+)\. Building optimized executable \.\.\.$",
+     "第 {0}/{1} 步：正在构建优化后的可执行文件……"),
+    (r"^Step (\d+)/(\d+)\. Deleting profile data \.\.\.$",
+     "第 {0}/{1} 步：正在删除性能分析数据……"),
+    (r"^make\[(\d+)\]: Entering directory '(.+)'$", "make[{0}]：进入目录“{1}”"),
+    (r"^make\[(\d+)\]: Leaving directory '(.+)'$", "make[{0}]：离开目录“{1}”"),
+    (r"^profiling:(.+):Cannot create directory$", "性能分析：{0}：无法创建目录"),
+    (r"^profiling:(.+):Skip$", "性能分析：{0}：已跳过"),
     (r"^Moving logfile (.+) to (.+)\.$", "正在将日志文件 {0} 移动到 {1}。"),
     (r"^Exception moving log:\s*(.+)$", "移动日志时出错：{0}"),
     (r"^Failed to update the atime of (.+):\s*(.+)$", "更新 {0} 的访问时间失败：{1}"),
@@ -567,6 +631,8 @@ def translate_worker_output(line):
                     .replace("'max_memory':", "'最大内存':")
                     .replace("'min_threads':", "'最少线程':")
                 )
+            if pattern == _FASTCHESS_CONFIG_PATTERN and groups:
+                groups[0] = _FASTCHESS_CONFIG_LABELS.get(groups[0], groups[0])
             return template.format(*groups)
 
     translated = stripped

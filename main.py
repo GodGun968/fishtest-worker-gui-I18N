@@ -43,6 +43,7 @@ CONFIG_FILE = os.path.join(WORKER_DIR, CONFIG_FILE_NAME)
 EXIT_FILE_NAME = "fish.exit"
 MSYS2_PATH = "C:\\msys64"
 USERNAME_DEFAULT = "your_username"
+CMD_PATH_SPECIAL_CHARS = "&|<>^()%!'\""
 
 # 全局配置文件锁，防止并发读写冲突
 _config_lock = threading.RLock()
@@ -75,7 +76,7 @@ def cmd_script_command(path, args=()):
     """通过 cmd.exe 调用批处理文件，返回 shell=False 命令行字符串。"""
     command_shell = os.environ.get("COMSPEC", "cmd.exe")
     values = [path, *[str(arg) for arg in args]]
-    cmd_metacharacters = "&|<>^()%!\""
+    cmd_metacharacters = CMD_PATH_SPECIAL_CHARS
     if any(any(char in value for char in cmd_metacharacters) for value in values):
         raise ValueError("命令参数包含不支持的 CMD 特殊字符")
 
@@ -87,24 +88,88 @@ def cmd_script_command(path, args=()):
     return f'"{command_shell}" /d /s /c {command_line}'
 
 def get_windows_short_path(path):
-    """返回可传给 MSYS2 的路径；Unicode 路径直接保留原样。"""
+    """返回 ASCII 兼容短路径；没有短路径时返回 None。"""
     path = os.path.abspath(path)
     needs_short_path = (
-        any(char in path for char in "&()^!%'")
+        not check_path_ascii(path)
+        or any(char in path for char in CMD_PATH_SPECIAL_CHARS)
     )
-    if not needs_short_path or os.name != "nt":
+    if not needs_short_path:
+        return path
+    if os.name != "nt":
         return path
     try:
         buffer = ctypes.create_unicode_buffer(32768)
         length = ctypes.windll.kernel32.GetShortPathNameW(path, buffer, len(buffer))
         short_path = buffer.value if length else ""
         if short_path and check_path_ascii(short_path) and not any(
-            char in short_path for char in "&|<>^()%!'\""
+            char in short_path for char in CMD_PATH_SPECIAL_CHARS
         ):
             return short_path
-        return path
+        return None
     except (AttributeError, OSError):
         return None
+
+def path_requires_compatibility(path):
+    """判断路径是否需要 ASCII 兼容处理。"""
+    path = os.path.abspath(path)
+    return not check_path_ascii(path) or any(
+        char in path for char in CMD_PATH_SPECIAL_CHARS
+    )
+
+def _path_is_within(path, directory):
+    try:
+        return os.path.commonpath([os.path.abspath(path), os.path.abspath(directory)]) == os.path.abspath(directory)
+    except ValueError:
+        return False
+
+def _subst_drive(path):
+    """将目录映射到空闲盘符，返回盘符根路径。"""
+    if os.name != "nt":
+        return None
+    path = os.path.abspath(path)
+    drive_mask = ctypes.windll.kernel32.GetLogicalDrives()
+    for drive_number in range(25, 2, -1):
+        if drive_mask & (1 << drive_number):
+            continue
+        drive = f"{chr(ord('A') + drive_number)}:"
+        result = subprocess.run(
+            ["subst", drive, path],
+            check=False,
+            capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if result.returncode == 0:
+            drive_root = drive + "\\"
+            if os.path.isdir(drive_root):
+                return drive_root
+            subprocess.run(
+                ["subst", drive, "/d"],
+                check=False,
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+    return None
+
+def _remove_subst_drive(drive_root):
+    if drive_root and os.name == "nt":
+        drive = drive_root[:2]
+        result = subprocess.run(
+            ["subst", drive, "/d"],
+            check=False,
+            capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if result.returncode != 0:
+            return False
+        verify = subprocess.run(
+            ["subst", drive],
+            check=False,
+            capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        return verify.returncode != 0
+    return True
 
 def terminate_process(process, timeout=5):
     """终止进程并等待退出，必要时强制结束。"""
@@ -149,6 +214,9 @@ class FishtestManagerApp(ctk.CTk):
         self._config_load_error = None
         self._closing = False
         self._command_process = None
+        self._subst_mappings = {}
+        self._subst_consent = None
+        self._path_compatibility_rejected = False
 
         # 简体中文是默认界面语言。在创建控件前读取已保存的语言，
         # 确保窗口首次显示时就使用正确的语言。
@@ -180,6 +248,44 @@ class FishtestManagerApp(ctk.CTk):
             return True
         except (tkinter.TclError, RuntimeError):
             return False
+
+    def _msys2_windows_path(self, path):
+        """返回 MSYS2 可用的 Windows 路径，必要时创建临时盘符映射。"""
+        path = os.path.abspath(path)
+        compatible_path = get_windows_short_path(path)
+        if compatible_path:
+            return compatible_path
+
+        if not path_requires_compatibility(path):
+            return path
+
+        if self._subst_consent is False:
+            self._path_compatibility_rejected = True
+            return None
+
+        if self._subst_consent is None:
+            self._subst_consent = tkinter.messagebox.askyesno(
+                t("dialog.path_compatibility.title"),
+                t("dialog.path_compatibility.message"),
+                icon="warning",
+            )
+            if not self._subst_consent:
+                self._path_compatibility_rejected = True
+                return None
+
+        mapping_base = APP_DIR if _path_is_within(path, APP_DIR) else (
+            path if os.path.isdir(path) else os.path.dirname(path)
+        )
+        mapping_base = os.path.abspath(mapping_base)
+        drive_root = self._subst_mappings.get(mapping_base)
+        if drive_root is None:
+            drive_root = _subst_drive(mapping_base)
+            if drive_root:
+                self._subst_mappings[mapping_base] = drive_root
+        if not drive_root:
+            return None
+        relative_path = os.path.relpath(path, mapping_base)
+        return os.path.join(drive_root, relative_path)
 
     def _is_admin(self):
         try:
@@ -334,10 +440,18 @@ class FishtestManagerApp(ctk.CTk):
         if self._config_load_error:
             self.add_log(t("log.config_load_failed", error=self._config_load_error), level="WARNING")
 
-        # 检查当前工作目录是否包含非 ASCII 字符
-        current_dir = APP_DIR
-        if not get_windows_short_path(current_dir):
-            self.add_log(t("log.path_unsupported"), level="ERROR")
+        if path_requires_compatibility(APP_DIR) and self._subst_consent is None:
+            self._subst_consent = tkinter.messagebox.askyesno(
+                t("dialog.path_compatibility.title"),
+                t("dialog.path_compatibility.message"),
+                icon="warning",
+            )
+            if not self._subst_consent:
+                self._path_compatibility_rejected = True
+                self.add_log(t("log.path_unsupported"), level="WARNING")
+
+        # Unicode 路径由 MSYS2 的 UTF-8 环境处理；无法安全传递的 CMD
+        # 控制字符会在实际启动前通过临时盘符映射解决。
 
         msys2_installed = os.path.exists(os.path.join(MSYS2_PATH, "msys2_shell.cmd"))
         worker_installed = os.path.exists(os.path.join(WORKER_DIR, "worker.py"))
@@ -394,7 +508,7 @@ class FishtestManagerApp(ctk.CTk):
 
         msys2_installed = os.path.exists(os.path.join(MSYS2_PATH, "msys2_shell.cmd"))
         worker_installed = os.path.exists(os.path.join(WORKER_DIR, "worker.py"))
-        worker_path_usable = bool(get_windows_short_path(WORKER_DIR))
+        worker_path_usable = True
         worker_dir_exists = os.path.exists(WORKER_DIR)
         msys2_uninstaller_exists = os.path.exists(os.path.join(MSYS2_PATH, "uninstall.exe"))
 
@@ -503,7 +617,7 @@ class FishtestManagerApp(ctk.CTk):
         if not tkinter.messagebox.askyesno(t("dialog.install.title"), t("dialog.install.message")):
             return
 
-        script_path = get_windows_short_path(get_asset_path("00_install_winget_msys2_admin.cmd"))
+        script_path = self._msys2_windows_path(get_asset_path("00_install_winget_msys2_admin.cmd"))
         if not script_path:
             self.add_log(t("log.path_unsupported"), level="ERROR")
             return
@@ -527,8 +641,8 @@ class FishtestManagerApp(ctk.CTk):
             cores = self.config.get('parameters', 'concurrency', fallback='3')
 
         # 将安装脚本路径转换为 MSYS2 兼容格式
-        script_win_path = get_windows_short_path(get_asset_path('gui_install_worker.sh'))
-        app_run_dir = get_windows_short_path(APP_DIR)
+        script_win_path = self._msys2_windows_path(get_asset_path('gui_install_worker.sh'))
+        app_run_dir = self._msys2_windows_path(APP_DIR)
         if not script_win_path or not app_run_dir:
             self.add_log(t("log.path_unsupported"), level="ERROR")
             return
@@ -565,7 +679,7 @@ class FishtestManagerApp(ctk.CTk):
         )
 
     def _update_msys2(self):
-        script_path = get_windows_short_path(get_asset_path("04_update_msys2.cmd"))
+        script_path = self._msys2_windows_path(get_asset_path("04_update_msys2.cmd"))
         if not script_path:
             self.add_log(t("log.path_unsupported"), level="ERROR")
             return
@@ -674,7 +788,7 @@ class FishtestManagerApp(ctk.CTk):
         # worker.py 必须在 WORKER_DIR 中运行。
         # msys2_shell.cmd 的 -where 参数使用 Windows 路径。
         # 加引号以处理路径中的空格。
-        worker_dir_win_path = get_windows_short_path(WORKER_DIR)
+        worker_dir_win_path = self._msys2_windows_path(WORKER_DIR)
         if not worker_dir_win_path:
             self.add_log(t("log.path_unsupported"), level="ERROR")
             self.worker_state = "idle"
@@ -1077,18 +1191,22 @@ class FishtestManagerApp(ctk.CTk):
         if self.worker_process and self.worker_process.poll() is None:
             if tkinter.messagebox.askyesno(t("dialog.exit.title"), t("dialog.exit.message")):
                 self._stop_worker_forcefully()
+                for drive_root in self._subst_mappings.values():
+                    _remove_subst_drive(drive_root)
                 self.destroy()
             else:
                 self._closing = False
                 self._worker_generation -= 1
         else:
+            for drive_root in self._subst_mappings.values():
+                _remove_subst_drive(drive_root)
             self.destroy()
 
 if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("blue")
     app = FishtestManagerApp()
-    if os.environ.get("CI_SMOKE_TEST") == "1":
+    if os.environ.get("CI_SMOKE_TEST") == "1" or "--ci-smoke-test" in sys.argv:
         app.after(1000, app.destroy)
 
     # 检查重新启动参数，以自动执行管理员操作
