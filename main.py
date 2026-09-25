@@ -89,11 +89,9 @@ def cmd_script_command(path, args=()):
     return f'"{command_shell}" /d /s /c {command_line}'
 
 def direct_cmd_command(path, args=()):
-    """通过 cmd.exe 运行批处理，并将参数限制为安全的 ASCII 内容。"""
+    """通过 cmd.exe 运行批处理；调用方负责保证参数已安全封装。"""
     command_shell = os.environ.get("COMSPEC", "cmd.exe")
     values = [path, *[str(arg) for arg in args]]
-    if any(any(char in value for char in CMD_PATH_SPECIAL_CHARS) for value in values):
-        raise ValueError("命令参数包含不支持的 CMD 特殊字符")
 
     def quote(value):
         return f'"{value}"' if any(char.isspace() for char in value) else value
@@ -279,11 +277,11 @@ class FishtestManagerApp(ctk.CTk):
         if can_use_path_without_mapping(path):
             return path
 
-        if self._subst_consent is False:
+        if getattr(self, "_subst_consent", False) is False:
             self._path_compatibility_rejected = True
             return None
 
-        if self._subst_consent is None:
+        if getattr(self, "_subst_consent", None) is None:
             self._subst_consent = tkinter.messagebox.askyesno(
                 t("dialog.path_compatibility.title"),
                 t("dialog.path_compatibility.message"),
