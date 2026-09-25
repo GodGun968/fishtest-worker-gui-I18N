@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tkinter
@@ -232,6 +233,7 @@ class FishtestManagerApp(ctk.CTk):
         self._closing = False
         self._command_process = None
         self._subst_mappings = {}
+        self._temporary_command_scripts = set()
         self._subst_cleanup_pending = False
         self._subst_consent = None
         self._path_compatibility_rejected = False
@@ -474,16 +476,6 @@ class FishtestManagerApp(ctk.CTk):
         if self._config_load_error:
             self.add_log(t("log.config_load_failed", error=self._config_load_error), level="WARNING")
 
-        if path_requires_compatibility(APP_DIR) and self._subst_consent is None:
-            self._subst_consent = tkinter.messagebox.askyesno(
-                t("dialog.path_compatibility.title"),
-                t("dialog.path_compatibility.message"),
-                icon="warning",
-            )
-            if not self._subst_consent:
-                self._path_compatibility_rejected = True
-                self.add_log(t("log.path_unsupported"), level="WARNING")
-
         # Unicode 路径由 MSYS2 的 UTF-8 环境处理；无法安全传递的 CMD
         # 控制字符会在实际启动前通过临时盘符映射解决。
 
@@ -653,7 +645,8 @@ class FishtestManagerApp(ctk.CTk):
 
         script_path = self._msys2_windows_path(get_asset_path("00_install_winget_msys2_admin.cmd"))
         if not script_path:
-            self.add_log(t("log.path_unsupported"), level="ERROR")
+            if self._path_compatibility_rejected:
+                self.add_log(t("log.path_unsupported"), level="WARNING")
             return
         try:
             command = direct_cmd_command(script_path)
@@ -678,7 +671,8 @@ class FishtestManagerApp(ctk.CTk):
         script_win_path = self._msys2_windows_path(get_asset_path('gui_install_worker.sh'))
         app_run_dir = self._msys2_windows_path(APP_DIR)
         if not script_win_path or not app_run_dir:
-            self.add_log(t("log.path_unsupported"), level="ERROR")
+            if self._path_compatibility_rejected:
+                self.add_log(t("log.path_unsupported"), level="WARNING")
             return
         msys2_script_path = windows_to_msys2_path(script_win_path)
         # 脚本应从应用根目录运行，以创建"worker"子文件夹。
@@ -691,14 +685,18 @@ class FishtestManagerApp(ctk.CTk):
         ]
         worker_install_cmd = (
             f"bash '{msys2_script_path}' "
-            f"--encoded {' '.join(repr(value) for value in encoded_args)}"
+            f"--encoded {' '.join(encoded_args)}"
         )
+        command_script = self._create_msys2_command_script(worker_install_cmd)
+        if not command_script:
+            self.add_log(t("log.install_script_create_failed"), level="ERROR")
+            return
 
-        # 使用参数列表启动 MSYS2，避免 CMD 对路径和参数进行二次解析。
+        # -c 参数只包含脚本路径，避免 CMD 对 Bash 命令二次解释。
         try:
             full_command = direct_cmd_command(
                 os.path.join(MSYS2_PATH, "msys2_shell.cmd"),
-                ["-defterm", "-ucrt64", "-no-start", "-where", app_run_dir, "-c", worker_install_cmd],
+                ["-defterm", "-ucrt64", "-no-start", "-where", app_run_dir, "-c", f"bash '{command_script}'"],
             )
         except ValueError as error:
             self.add_log(t("log.command_args_invalid", error=error), level="ERROR")
@@ -712,10 +710,28 @@ class FishtestManagerApp(ctk.CTk):
             shell=False,
         )
 
+    def _create_msys2_command_script(self, command):
+        """创建 ASCII 可访问的临时 Bash 脚本，避免 CMD/Bash 多层转义。"""
+        try:
+            fd, script_path = tempfile.mkstemp(prefix="fishtest-", suffix=".sh", dir=APP_DIR)
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as script_file:
+                script_file.write("#!/bin/bash\nset -e\n")
+                script_file.write(command)
+                script_file.write("\n")
+            mapped_path = self._msys2_windows_path(script_path)
+            if not mapped_path:
+                os.remove(script_path)
+                return None
+            self._temporary_command_scripts.add(script_path)
+            return windows_to_msys2_path(mapped_path)
+        except (OSError, UnicodeError):
+            return None
+
     def _update_msys2(self):
         script_path = self._msys2_windows_path(get_asset_path("04_update_msys2.cmd"))
         if not script_path:
-            self.add_log(t("log.path_unsupported"), level="ERROR")
+            if self._path_compatibility_rejected:
+                self.add_log(t("log.path_unsupported"), level="WARNING")
             return
         try:
             command = direct_cmd_command(script_path)
@@ -1107,12 +1123,14 @@ class FishtestManagerApp(ctk.CTk):
         threading.Thread(target=run, daemon=True).start()
 
     def _finish_long_operation(self):
+        self._cleanup_temporary_command_scripts()
         if self._closing:
             return
         self.is_long_operation_running = False
         self._update_all_controls_state()
 
     def _complete_command(self, end_message, on_complete):
+        self._cleanup_temporary_command_scripts()
         if self._closing:
             return
         if end_message:
@@ -1123,11 +1141,22 @@ class FishtestManagerApp(ctk.CTk):
             on_complete()
 
     def _fail_command(self, message):
+        self._cleanup_temporary_command_scripts()
         if self._closing:
             return
         self.add_log(message, level="ERROR")
         self.is_long_operation_running = False
         self._update_all_controls_state()
+
+    def _cleanup_temporary_command_scripts(self):
+        for path in tuple(self._temporary_command_scripts):
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                continue
+            self._temporary_command_scripts.discard(path)
 
     def _open_settings_window(self):
         win = ctk.CTkToplevel(self)
