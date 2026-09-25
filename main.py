@@ -87,6 +87,19 @@ def cmd_script_command(path, args=()):
     command_line = "chcp 65001 >nul & call " + " ".join(quote(value) for value in values)
     return f'"{command_shell}" /d /s /c {command_line}'
 
+def direct_cmd_command(path, args=()):
+    """通过 cmd.exe 运行批处理，并将参数限制为安全的 ASCII 内容。"""
+    command_shell = os.environ.get("COMSPEC", "cmd.exe")
+    values = [path, *[str(arg) for arg in args]]
+    if any(any(char in value for char in CMD_PATH_SPECIAL_CHARS) for value in values):
+        raise ValueError("命令参数包含不支持的 CMD 特殊字符")
+
+    def quote(value):
+        return f'"{value}"' if any(char.isspace() for char in value) else value
+
+    command_line = "chcp 65001 >nul & call " + " ".join(quote(value) for value in values)
+    return f'"{command_shell}" /d /s /c {command_line}'
+
 def get_windows_short_path(path):
     """返回 ASCII 兼容短路径；没有短路径时返回 None。"""
     path = os.path.abspath(path)
@@ -643,7 +656,7 @@ class FishtestManagerApp(ctk.CTk):
             self.add_log(t("log.path_unsupported"), level="ERROR")
             return
         try:
-            command = cmd_script_command(script_path)
+            command = direct_cmd_command(script_path)
         except ValueError as error:
             self.add_log(t("log.command_args_invalid", error=error), level="ERROR")
             return
@@ -683,7 +696,7 @@ class FishtestManagerApp(ctk.CTk):
 
         # 使用参数列表启动 MSYS2，避免 CMD 对路径和参数进行二次解析。
         try:
-            full_command = cmd_script_command(
+            full_command = direct_cmd_command(
                 os.path.join(MSYS2_PATH, "msys2_shell.cmd"),
                 ["-defterm", "-ucrt64", "-no-start", "-where", app_run_dir, "-c", worker_install_cmd],
             )
@@ -705,7 +718,7 @@ class FishtestManagerApp(ctk.CTk):
             self.add_log(t("log.path_unsupported"), level="ERROR")
             return
         try:
-            command = cmd_script_command(script_path)
+            command = direct_cmd_command(script_path)
         except ValueError as error:
             self.add_log(t("log.command_args_invalid", error=error), level="ERROR")
             return
@@ -823,7 +836,7 @@ class FishtestManagerApp(ctk.CTk):
         worker_command = "env/bin/python3 worker.py"
 
         try:
-            full_command = cmd_script_command(
+            full_command = direct_cmd_command(
                 os.path.join(MSYS2_PATH, "msys2_shell.cmd"),
                 ["-defterm", "-ucrt64", "-no-start", "-where", worker_dir_win_path, "-c", worker_command],
             )
