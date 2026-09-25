@@ -117,6 +117,10 @@ def path_requires_compatibility(path):
         char in path for char in CMD_PATH_SPECIAL_CHARS
     )
 
+def can_use_path_without_mapping(path):
+    """检测路径是否会在 CMD/MSYS2 参数传递中需要兼容转换。"""
+    return not path_requires_compatibility(path)
+
 def _path_is_within(path, directory):
     try:
         return os.path.commonpath([os.path.abspath(path), os.path.abspath(directory)]) == os.path.abspath(directory)
@@ -215,6 +219,7 @@ class FishtestManagerApp(ctk.CTk):
         self._closing = False
         self._command_process = None
         self._subst_mappings = {}
+        self._subst_cleanup_pending = False
         self._subst_consent = None
         self._path_compatibility_rejected = False
 
@@ -256,7 +261,7 @@ class FishtestManagerApp(ctk.CTk):
         if compatible_path:
             return compatible_path
 
-        if not path_requires_compatibility(path):
+        if can_use_path_without_mapping(path):
             return path
 
         if self._subst_consent is False:
@@ -285,7 +290,23 @@ class FishtestManagerApp(ctk.CTk):
         if not drive_root:
             return None
         relative_path = os.path.relpath(path, mapping_base)
-        return os.path.join(drive_root, relative_path)
+        mapped_path = os.path.normpath(os.path.join(drive_root, relative_path))
+        if not check_path_ascii(mapped_path):
+            return None
+        return mapped_path
+
+    def _remove_all_subst_mappings(self):
+        """严格删除本程序创建的全部盘符映射，并核实清理结果。"""
+        failures = []
+        for drive_root in tuple(self._subst_mappings.values()):
+            if not _remove_subst_drive(drive_root):
+                failures.append(drive_root)
+        self._subst_cleanup_pending = bool(failures)
+        if failures:
+            self.add_log(t("log.subst_cleanup_failed", drives=", ".join(failures)), level="ERROR")
+        else:
+            self._subst_mappings.clear()
+        return not failures
 
     def _is_admin(self):
         try:
@@ -515,7 +536,7 @@ class FishtestManagerApp(ctk.CTk):
         self.setup_button.configure(state='normal')
         self.settings_button.configure(state='normal')
         self.update_button.configure(state='normal' if msys2_installed else 'disabled')
-        self.worker_button.configure(state='normal' if worker_installed and worker_path_usable else 'disabled',
+        self.worker_button.configure(state='normal' if worker_installed and worker_path_usable and not self._path_compatibility_rejected else 'disabled',
                                      text=t("button.start_worker"), fg_color="#1F6AA5", hover_color="#144870")
 
         if worker_dir_exists:
@@ -1191,15 +1212,13 @@ class FishtestManagerApp(ctk.CTk):
         if self.worker_process and self.worker_process.poll() is None:
             if tkinter.messagebox.askyesno(t("dialog.exit.title"), t("dialog.exit.message")):
                 self._stop_worker_forcefully()
-                for drive_root in self._subst_mappings.values():
-                    _remove_subst_drive(drive_root)
+                self._remove_all_subst_mappings()
                 self.destroy()
             else:
                 self._closing = False
                 self._worker_generation -= 1
         else:
-            for drive_root in self._subst_mappings.values():
-                _remove_subst_drive(drive_root)
+            self._remove_all_subst_mappings()
             self.destroy()
 
 if __name__ == "__main__":
