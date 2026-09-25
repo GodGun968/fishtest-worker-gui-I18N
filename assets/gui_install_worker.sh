@@ -4,19 +4,21 @@
 # 图形界面传入的参数
 if [ "$1" = "--encoded" ]; then
     decode_arg() {
-        printf '%s' "$1" | base64 --decode
+        # -d 在 MSYS2/GNU coreutils 版本中比 --decode 更兼容
+        printf '%s' "$1" | base64 -d 2>/dev/null
     }
 
-    usr_name="$(decode_arg "$2")"
-    usr_pwd="$(decode_arg "$3")"
-    n_cores="$(decode_arg "$4")"
-    ui_language="$(decode_arg "$5")"
-    if [ -z "$usr_name" ] || [ -z "$ui_language" ]; then
-        if [ "$ui_language" = "en_US" ]; then
-            echo "Error: Failed to decode installation arguments."
-        else
-            echo "错误：无法解码图形界面传入的安装参数。"
-        fi
+    if [ "$#" -ne 5 ]; then
+        echo "错误：安装参数数量不正确。"
+        exit 2
+    fi
+
+    usr_name="$(decode_arg "$2")" || exit 2
+    usr_pwd="$(decode_arg "$3")" || exit 2
+    n_cores="$(decode_arg "$4")" || exit 2
+    ui_language="$(decode_arg "$5")" || exit 2
+    if [ -z "$usr_name" ] || [ -z "$n_cores" ] || [ "$ui_language" != "zh_CN" ] && [ "$ui_language" != "en_US" ]; then
+        echo "错误：无法解码图形界面传入的安装参数。"
         exit 2
     fi
 else
