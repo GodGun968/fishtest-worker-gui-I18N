@@ -2,21 +2,26 @@
 # 用于图形界面的非交互式 Fishtest Worker 安装脚本
 
 # 图形界面传入的参数
-if [ "$1" = "--encoded" ]; then
+if [ "$1" = "--parameter-file" ]; then
     decode_arg() {
         # -d 在 MSYS2/GNU coreutils 版本中比 --decode 更兼容
         printf '%s' "$1" | base64 -d 2>/dev/null
     }
 
-    if [ "$#" -ne 5 ]; then
-        echo "错误：安装参数数量不正确。"
+    if [ "$#" -ne 2 ] || [ ! -f "$2" ]; then
+        echo "错误：安装参数文件无效。"
         exit 2
     fi
 
-    usr_name="$(decode_arg "$2")" || exit 2
-    usr_pwd="$(decode_arg "$3")" || exit 2
-    n_cores="$(decode_arg "$4")" || exit 2
-    ui_language="$(decode_arg "$5")" || exit 2
+    mapfile -t encoded_args < "$2"
+    if [ "${#encoded_args[@]}" -ne 4 ]; then
+        echo "错误：安装参数文件内容不完整。"
+        exit 2
+    fi
+    usr_name="$(decode_arg "${encoded_args[0]}")" || exit 2
+    usr_pwd="$(decode_arg "${encoded_args[1]}")" || exit 2
+    n_cores="$(decode_arg "${encoded_args[2]}")" || exit 2
+    ui_language="$(decode_arg "${encoded_args[3]}")" || exit 2
     if [ -z "$usr_name" ] || [ -z "$n_cores" ] || [ "$ui_language" != "zh_CN" ] && [ "$ui_language" != "en_US" ]; then
         echo "错误：无法解码图形界面传入的安装参数。"
         exit 2

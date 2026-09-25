@@ -681,10 +681,11 @@ class FishtestManagerApp(ctk.CTk):
             base64.b64encode(value.encode("utf-8")).decode("ascii")
             for value in (user, password, cores, get_language())
         ]
-        worker_install_cmd = (
-            f"bash '{msys2_script_path}' "
-            f"--encoded {' '.join(encoded_args)}"
-        )
+        parameter_file = self._create_install_parameter_file(encoded_args)
+        if not parameter_file:
+            self.add_log(t("log.install_script_create_failed"), level="ERROR")
+            return
+        worker_install_cmd = f"bash '{msys2_script_path}' --parameter-file '{parameter_file}'"
         command_script = self._create_msys2_command_script(worker_install_cmd)
         if not command_script:
             self.add_log(t("log.install_script_create_failed"), level="ERROR")
@@ -721,6 +722,21 @@ class FishtestManagerApp(ctk.CTk):
                 os.remove(script_path)
                 return None
             self._temporary_command_scripts.add(script_path)
+            return windows_to_msys2_path(mapped_path)
+        except (OSError, UnicodeError):
+            return None
+
+    def _create_install_parameter_file(self, encoded_args):
+        """创建每行一个 Base64 参数的文件，避免 MSYS2 重排命令参数。"""
+        try:
+            fd, path = tempfile.mkstemp(prefix="fishtest-args-", suffix=".txt", dir=APP_DIR)
+            with os.fdopen(fd, "w", encoding="ascii", newline="\n") as parameter_file:
+                parameter_file.write("\n".join(encoded_args) + "\n")
+            mapped_path = self._msys2_windows_path(path)
+            if not mapped_path:
+                os.remove(path)
+                return None
+            self._temporary_command_scripts.add(path)
             return windows_to_msys2_path(mapped_path)
         except (OSError, UnicodeError):
             return None
